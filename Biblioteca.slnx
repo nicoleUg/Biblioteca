@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="Biblioteca.Core/Biblioteca.Core.csproj" />
+  <Project Path="Biblioteca.Infrastructure/Biblioteca.Infrastructure.csproj" />
+  <Project Path="Biblioteca/Biblioteca.csproj" />
+</Solution>
