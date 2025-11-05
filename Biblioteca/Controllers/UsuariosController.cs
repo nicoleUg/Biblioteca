@@ -1,125 +1,103 @@
-﻿using Biblioteca.Core.Entities;
+﻿using AutoMapper;
+using Biblioteca.Core.CustomEntities;
+using Biblioteca.Core.DTOs;
+using Biblioteca.Core.Exceptions;
 using Biblioteca.Core.Interfaces;
+using Biblioteca.Core.QueryFilters;
+using Biblioteca.Responses;
 using Microsoft.AspNetCore.Mvc;
+using System.Net;
 
 namespace Biblioteca.Controllers;
 
+[Produces("application/json")]
 [ApiController]
 [Route("api/[controller]")]
 public class UsuariosController : ControllerBase
 {
-    private readonly IBaseRepository<Usuario> _repo;
+    private readonly IUnitOfWork _uow;
+    private readonly IMapper _mapper;
 
-    public UsuariosController(IBaseRepository<Usuario> repo)
-    {
-        _repo = repo;
-    }
+    public UsuariosController(IUnitOfWork uow, IMapper mapper)
+    { _uow = uow; _mapper = mapper; }
 
-    // GET: api/usuarios
+    /// <summary>Lista de usuarios (Dapper + filtros + paginación)</summary>
     [HttpGet]
-    public async Task<IActionResult> GetAll()
+    [ProducesResponseType((int)HttpStatusCode.OK, Type = typeof(ApiResponse<IEnumerable<UsuarioDto>>))]
+    public async Task<IActionResult> Get([FromQuery] UsuarioQueryFilter filters)
     {
-        var data = await _repo.GetAll();
-        return Ok(data.Select(u => new {
-            u.Id,
-            u.Nombre,
-            u.Email,
-            u.Rol,
-            u.Activo
-        }));
+        var items = await _uow.UsuariosEx.GetAllDapperAsync(filters.Nombre, filters.Email, filters.Rol, filters.Activo);
+        var paged = PagedList<Biblioteca.Core.Entities.Usuario>.Create(items, filters.PageNumber, filters.PageSize);
+        var dto = _mapper.Map<IEnumerable<UsuarioDto>>(paged);
+
+        return Ok(new ApiResponse<IEnumerable<UsuarioDto>>(dto)
+        {
+            Pagination = new Pagination
+            {
+                TotalCount = paged.TotalCount,
+                PageSize = paged.PageSize,
+                CurrentPage = paged.CurrentPage,
+                TotalPages = paged.TotalPages,
+                HasNextPage = paged.HasNextPage,
+                HasPreviousPage = paged.HasPreviousPage
+            }
+        });
     }
 
-    // GET: api/usuarios/5
+    /// <summary>Detalle de usuario por id (Dapper)</summary>
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById(int id)
     {
-        var u = await _repo.GetById(id);
-        if (u is null) return NotFound();
-        return Ok(new { u.Id, u.Nombre, u.Email, u.Rol, u.Activo });
+        var e = await _uow.UsuariosEx.GetByIdDapperAsync(id);
+        if (e is null) throw new BusinessException("Usuario no encontrado", 404);
+        return Ok(new ApiResponse<UsuarioDto>(_mapper.Map<UsuarioDto>(e)));
     }
 
-    // POST: api/usuarios
+    /// <summary>Crea usuario (EF)</summary>
     [HttpPost]
-    public async Task<IActionResult> Create([FromBody] Usuario model)
+    public async Task<IActionResult> Create([FromBody] UsuarioDto dto)
     {
-        if (string.IsNullOrWhiteSpace(model.Nombre) || string.IsNullOrWhiteSpace(model.Email))
-            return BadRequest(new { message = "Nombre y Email son requeridos" });
+        var entity = _mapper.Map<Biblioteca.Core.Entities.Usuario>(dto);
+        entity.Id = 0;
 
-        // Rol por defecto si no envían
-        if (string.IsNullOrWhiteSpace(model.Rol)) model.Rol = "estudiante";
-        if (model.Rol != "estudiante" && model.Rol != "staff")
-            return BadRequest(new { message = "Rol debe ser estudiante|staff" });
+        await _uow.BeginTransactionAsync();
+        await _uow.Usuarios.Add(entity);
+        await _uow.CommitAsync();
 
-        model.Activo = model.Activo; // por defecto true en la entidad
-        await _repo.Add(model);
-        return CreatedAtAction(nameof(GetById), new { id = model.Id }, new { model.Id });
+        var outDto = _mapper.Map<UsuarioDto>(entity);
+        return StatusCode((int)HttpStatusCode.Created, new ApiResponse<UsuarioDto>(outDto)
+        { Messages = new[] { new Message { Type = "success", Description = "Usuario creado" } } });
     }
 
-    // PUT: api/usuarios/5
+    /// <summary>Actualiza usuario (EF)</summary>
     [HttpPut("{id:int}")]
-    public async Task<IActionResult> Update(int id, [FromBody] Usuario model)
+    public async Task<IActionResult> Update(int id, [FromBody] UsuarioDto dto)
     {
-        var u = await _repo.GetById(id);
-        if (u is null) return NotFound();
+        var entity = await _uow.Usuarios.GetById(id);
+        if (entity is null) throw new BusinessException("Usuario no encontrado", 404);
 
-        if (!string.IsNullOrWhiteSpace(model.Nombre)) u.Nombre = model.Nombre;
-        if (!string.IsNullOrWhiteSpace(model.Email)) u.Email = model.Email;
-        if (!string.IsNullOrWhiteSpace(model.Rol))
-        {
-            if (model.Rol != "estudiante" && model.Rol != "staff")
-                return BadRequest(new { message = "Rol debe ser estudiante|staff" });
-            u.Rol = model.Rol;
-        }
-        u.Activo = model.Activo == u.Activo ? u.Activo : model.Activo;
+        entity.Nombre = dto.Nombre;
+        entity.Email = dto.Email;
+        entity.Rol = dto.Rol;
+        entity.Activo = dto.Activo;
 
-        await _repo.Update(u);
-        return NoContent();
+        await _uow.BeginTransactionAsync();
+        _uow.Usuarios.Update(entity);
+        await _uow.CommitAsync();
+
+        return Ok(new ApiResponse<UsuarioDto>(_mapper.Map<UsuarioDto>(entity))
+        { Messages = new[] { new Message { Type = "success", Description = "Usuario actualizado" } } });
     }
 
-    // DELETE: api/usuarios/5
+    /// <summary>Elimina usuario (EF)</summary>
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
-        var u = await _repo.GetById(id);
-        if (u is null) return NotFound();
-        await _repo.Delete(id);
-        return NoContent();
-    }
+        await _uow.BeginTransactionAsync();
+        await _uow.Usuarios.Delete(id);
+        await _uow.CommitAsync();
 
-    // PUT: api/usuarios/5/activar
-    [HttpPut("{id:int}/activar")]
-    public async Task<IActionResult> Activar(int id)
-    {
-        var u = await _repo.GetById(id);
-        if (u is null) return NotFound();
-        u.Activo = true;
-        await _repo.Update(u);
-        return NoContent();
-    }
-
-    // PUT: api/usuarios/5/desactivar
-    [HttpPut("{id:int}/desactivar")]
-    public async Task<IActionResult> Desactivar(int id)
-    {
-        var u = await _repo.GetById(id);
-        if (u is null) return NotFound();
-        u.Activo = false;
-        await _repo.Update(u);
-        return NoContent();
-    }
-
-    // PUT: api/usuarios/5/rol?rol=staff
-    [HttpPut("{id:int}/rol")]
-    public async Task<IActionResult> CambiarRol(int id, [FromQuery] string rol)
-    {
-        if (rol != "estudiante" && rol != "staff")
-            return BadRequest(new { message = "Rol debe ser estudiante|staff" });
-
-        var u = await _repo.GetById(id);
-        if (u is null) return NotFound();
-
-        u.Rol = rol;
-        await _repo.Update(u);
-        return NoContent();
+        return Ok(new ApiResponse<bool>(true)
+        { Messages = new[] { new Message { Type = "warning", Description = "Usuario eliminado" } } });
     }
 }

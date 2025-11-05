@@ -1,70 +1,160 @@
-﻿using Biblioteca.Core.Entities;
+﻿using AutoMapper;
+using Biblioteca.Core.CustomEntities;
+using Biblioteca.Core.DTOs;
+using Biblioteca.Core.Exceptions;
 using Biblioteca.Core.Interfaces;
+using Biblioteca.Core.QueryFilters;
+using Biblioteca.Responses;
 using Microsoft.AspNetCore.Mvc;
+using System.Net;
 
 namespace Biblioteca.Controllers;
 
+[Produces("application/json")]
 [ApiController]
 [Route("api/[controller]")]
 public class MultasController : ControllerBase
 {
+    private readonly IUnitOfWork _uow;
     private readonly IMultaService _service;
-    private readonly IBaseRepository<Multa> _repo;
+    private readonly IMapper _mapper;
 
-    public MultasController(IMultaService service, IBaseRepository<Multa> repo)
+    public MultasController(IUnitOfWork uow, IMultaService service, IMapper mapper)
     {
+        _uow = uow;
         _service = service;
-        _repo = repo;
+        _mapper = mapper;
     }
 
-    // GET: api/multas
+    /// <summary>Lista de multas (Dapper + filtros + paginación)</summary>
     [HttpGet]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> Get([FromQuery] MultaQueryFilter filters)
     {
-        var data = await _repo.GetAll();
-        return Ok(data.Select(m => new {
-            m.Id,
-            m.PrestamoId,
-            m.UsuarioId,
-            m.Motivo,
-            m.Detalle,
-            m.MontoBs,
-            m.Estado
-        }));
+        // Usar MultasEx para acceder a GetAllDapperAsync
+        var items = await _uow.MultasEx.GetAllDapperAsync(filters.UsuarioId, filters.Estado);
+        var paged = PagedList<Biblioteca.Core.Entities.Multa>.Create(items, filters.PageNumber, filters.PageSize);
+        var dto = _mapper.Map<IEnumerable<MultaDto>>(paged);
+
+        return Ok(new ApiResponse<IEnumerable<MultaDto>>(dto)
+        {
+            Pagination = new Pagination
+            {
+                TotalCount = paged.TotalCount,
+                PageSize = paged.PageSize,
+                CurrentPage = paged.CurrentPage,
+                TotalPages = paged.TotalPages,
+                HasNextPage = paged.HasNextPage,
+                HasPreviousPage = paged.HasPreviousPage
+            }
+        });
     }
 
-    // GET: api/multas/5
+    /// <summary>Obtiene una multa por Id (Dapper)</summary>
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById(int id)
     {
-        var m = await _repo.GetById(id);
-        if (m is null) return NotFound();
-        return Ok(new { m.Id, m.PrestamoId, m.UsuarioId, m.Motivo, m.Detalle, m.MontoBs, m.Estado });
+        // Usar MultasEx para acceder a GetByIdDapperAsync
+        var e = await _uow.MultasEx.GetByIdDapperAsync(id);
+        if (e is null) throw new BusinessException("Multa no encontrada", 404);
+        return Ok(new ApiResponse<MultaDto>(_mapper.Map<MultaDto>(e)));
     }
 
-    // GET: api/multas/usuario/3
-    [HttpGet("usuario/{usuarioId:int}")]
-    public async Task<IActionResult> ListarPorUsuario(int usuarioId)
+    /// <summary>Crea una multa</summary>
+    [HttpPost]
+    public async Task<IActionResult> Create([FromBody] MultaDto dto)
     {
-        var todas = await _repo.GetAll();
-        var result = todas.Where(m => m.UsuarioId == usuarioId)
-                          .Select(m => new { m.Id, m.PrestamoId, m.UsuarioId, m.Motivo, m.Detalle, m.MontoBs, m.Estado });
-        return Ok(result);
+        var entity = _mapper.Map<Biblioteca.Core.Entities.Multa>(dto);
+        await _uow.BeginTransactionAsync();
+        try
+        {
+            await _uow.Multas.Add(entity);
+            await _uow.CommitAsync();
+
+            dto.Id = entity.Id;
+            return StatusCode((int)HttpStatusCode.Created,
+                new ApiResponse<MultaDto>(dto)
+                {
+                    Messages = new[] { new Message { Type = "success", Description = "Multa creada" } }
+                });
+        }
+        catch
+        {
+            await _uow.RollbackAsync();
+            throw;
+        }
     }
 
-    // PUT: api/multas/5/pagar
-    [HttpPut("{id:int}/pagar")]
+    /// <summary>Actualiza una multa</summary>
+    [HttpPut("{id:int}")]
+    public async Task<IActionResult> Update(int id, [FromBody] MultaDto dto)
+    {
+        var e = await _uow.Multas.GetById(id);
+        if (e is null) throw new BusinessException("Multa no encontrada", 404);
+
+        _mapper.Map(dto, e);
+        await _uow.BeginTransactionAsync();
+        try
+        {
+            _uow.Multas.Update(e);
+            await _uow.CommitAsync();
+
+            return Ok(new ApiResponse<MultaDto>(_mapper.Map<MultaDto>(e))
+            {
+                Messages = new[] { new Message { Type = "success", Description = "Multa actualizada" } }
+            });
+        }
+        catch
+        {
+            await _uow.RollbackAsync();
+            throw;
+        }
+    }
+
+    /// <summary>Pagar una multa</summary>
+    [HttpPost("{id:int}/pagar")]
     public async Task<IActionResult> Pagar(int id)
     {
-        var ok = await _service.PagarMultaAsync(id);
-        return ok ? NoContent() : NotFound(new { message = "La multa no existe." });
+        var resultado = await _service.PagarMultaAsync(id);
+        if (!resultado) throw new BusinessException("Multa no encontrada", 404);
+
+        return Ok(new ApiResponse<bool>(true)
+        {
+            Messages = new[] { new Message { Type = "success", Description = "Multa pagada exitosamente" } }
+        });
     }
 
-    // PUT: api/multas/5/cancelar?motivo=Error
-    [HttpPut("{id:int}/cancelar")]
+    /// <summary>Cancelar una multa</summary>
+    [HttpPost("{id:int}/cancelar")]
     public async Task<IActionResult> Cancelar(int id, [FromQuery] string? motivo = null)
     {
-        var ok = await _service.CancelarMultaAsync(id, motivo);
-        return ok ? NoContent() : NotFound(new { message = "La multa no existe." });
+        var resultado = await _service.CancelarMultaAsync(id, motivo);
+        if (!resultado) throw new BusinessException("Multa no encontrada", 404);
+
+        return Ok(new ApiResponse<bool>(true)
+        {
+            Messages = new[] { new Message { Type = "success", Description = "Multa cancelada exitosamente" } }
+        });
+    }
+
+    /// <summary>Elimina una multa</summary>
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> Delete(int id)
+    {
+        await _uow.BeginTransactionAsync();
+        try
+        {
+            await _uow.Multas.Delete(id);
+            await _uow.CommitAsync();
+
+            return Ok(new ApiResponse<bool>(true)
+            {
+                Messages = new[] { new Message { Type = "warning", Description = "Multa eliminada" } }
+            });
+        }
+        catch
+        {
+            await _uow.RollbackAsync();
+            throw;
+        }
     }
 }

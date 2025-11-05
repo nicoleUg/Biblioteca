@@ -1,157 +1,154 @@
-﻿using Biblioteca.Core.Entities;
+﻿using AutoMapper;
+using Biblioteca.Core.CustomEntities;
+using Biblioteca.Core.DTOs;
+using Biblioteca.Core.Exceptions;
 using Biblioteca.Core.Interfaces;
+using Biblioteca.Core.QueryFilters;
+using Biblioteca.Responses;
 using Microsoft.AspNetCore.Mvc;
+using System.Net;
 
 namespace Biblioteca.Controllers;
 
+/// <summary>
+/// Gestión de Libros (GET con Dapper, filtros y paginación)
+/// </summary>
+[Produces("application/json")]
 [ApiController]
 [Route("api/[controller]")]
 public class LibrosController : ControllerBase
 {
-    private readonly IBaseRepository<Libro> _repo;
+    private readonly IUnitOfWork _uow;
+    private readonly IMapper _mapper;
 
-    public LibrosController(IBaseRepository<Libro> repo)
+    public LibrosController(IUnitOfWork uow, IMapper mapper)
     {
-        _repo = repo;
+        _uow = uow;
+        _mapper = mapper;
     }
 
-    // GET: api/libros
+    /// <summary>Lista de libros filtrada/paginada (GET via Dapper)</summary>
+    /// <remarks>Filtros: titulo, autor, categoria, habilitado. Paginación: pageNumber, pageSize.</remarks>
+    /// <param name="filters">Filtro de búsqueda y paginación</param>
+    /// <response code="200">Retorna la lista de LibroDto</response>
+    /// <response code="500">Error interno</response>
     [HttpGet]
-    public async Task<IActionResult> GetAll()
+    [ProducesResponseType((int)HttpStatusCode.OK, Type = typeof(ApiResponse<IEnumerable<LibroDto>>))]
+    public async Task<IActionResult> Get([FromQuery] LibroQueryFilter filters)
     {
-        var data = await _repo.GetAll();
-        return Ok(data.Select(l => new {
-            l.Id,
-            l.Titulo,
-            l.Autor,
-            l.Categoria,
-            l.CostoReposicionBs,
-            l.TotalEjemplares,
-            l.EjemplaresDisponibles,
-            l.Habilitado,
-            l.CondicionGeneral
-        }));
+        var items = await _uow.LibrosEx.GetAllDapperAsync(
+            filters.Titulo, filters.Autor, filters.Categoria, filters.Habilitado);
+
+        var paged = PagedList<Biblioteca.Core.Entities.Libro>
+            .Create(items, filters.PageNumber, filters.PageSize);
+
+        var dto = _mapper.Map<IEnumerable<LibroDto>>(paged);
+
+        var response = new ApiResponse<IEnumerable<LibroDto>>(dto)
+        {
+            Pagination = new Pagination
+            {
+                TotalCount = paged.TotalCount,
+                PageSize = paged.PageSize,
+                CurrentPage = paged.CurrentPage,
+                TotalPages = paged.TotalPages,
+                HasNextPage = paged.HasNextPage,
+                HasPreviousPage = paged.HasPreviousPage
+            }
+        };
+
+        return Ok(response);
     }
 
-    // GET: api/libros/5
+    /// <summary>Obtiene un libro por ID (Dapper)</summary>
+    /// <param name="id">Identificador del libro</param>
+    /// <response code="200">Libro encontrado</response>
+    /// <response code="404">Libro no encontrado</response>
     [HttpGet("{id:int}")]
+    [ProducesResponseType((int)HttpStatusCode.OK, Type = typeof(ApiResponse<LibroDto>))]
+    [ProducesResponseType((int)HttpStatusCode.NotFound)]
     public async Task<IActionResult> GetById(int id)
     {
-        var l = await _repo.GetById(id);
-        if (l is null) return NotFound();
-        return Ok(new
+        var e = await _uow.LibrosEx.GetByIdDapperAsync(id);
+        if (e is null) throw new BusinessException("Libro no encontrado", 404);
+
+        return Ok(new ApiResponse<LibroDto>(_mapper.Map<LibroDto>(e)));
+    }
+
+    /// <summary>Crea un nuevo libro (EF)</summary>
+    /// <response code="201">Libro creado correctamente</response>
+    [HttpPost]
+    [ProducesResponseType((int)HttpStatusCode.Created, Type = typeof(ApiResponse<LibroDto>))]
+    public async Task<IActionResult> Create([FromBody] LibroDto dto)
+    {
+        var entity = _mapper.Map<Biblioteca.Core.Entities.Libro>(dto);
+        entity.Id = 0; // ignorar Id del body si vino
+
+        await _uow.BeginTransactionAsync();
+        await _uow.Libros.Add(entity);
+        await _uow.CommitAsync();
+
+        dto.Id = entity.Id;
+        return StatusCode((int)HttpStatusCode.Created,
+            new ApiResponse<LibroDto>(dto)
+            {
+                Messages = new[]
+                {
+                    new Message { Type = "success", Description = "Libro creado correctamente" }
+                }
+            });
+    }
+
+    /// <summary>Actualiza un libro existente (EF)</summary>
+    /// <response code="200">Libro actualizado</response>
+    /// <response code="404">Libro no encontrado</response>
+    [HttpPut("{id:int}")]
+    [ProducesResponseType((int)HttpStatusCode.OK, Type = typeof(ApiResponse<LibroDto>))]
+    [ProducesResponseType((int)HttpStatusCode.NotFound)]
+    public async Task<IActionResult> Update(int id, [FromBody] LibroDto dto)
+    {
+        var entity = await _uow.Libros.GetById(id);
+        if (entity is null) throw new BusinessException("Libro no encontrado", 404);
+
+        // Mapear campos actualizables
+        entity.Titulo = dto.Titulo;
+        entity.Autor = dto.Autor;
+        entity.Categoria = dto.Categoria;
+        entity.CostoReposicionBs = dto.CostoReposicionBs;
+        entity.TotalEjemplares = dto.TotalEjemplares;
+        entity.EjemplaresDisponibles = dto.EjemplaresDisponibles;
+        entity.CondicionGeneral = dto.CondicionGeneral;
+        entity.Habilitado = dto.Habilitado;
+
+        await _uow.BeginTransactionAsync();
+        _uow.Libros.Update(entity);
+        await _uow.CommitAsync();
+
+        return Ok(new ApiResponse<LibroDto>(_mapper.Map<LibroDto>(entity))
         {
-            l.Id,
-            l.Titulo,
-            l.Autor,
-            l.Categoria,
-            l.CostoReposicionBs,
-            l.TotalEjemplares,
-            l.EjemplaresDisponibles,
-            l.Habilitado,
-            l.CondicionGeneral
+            Messages = new[]
+            {
+                new Message { Type = "success", Description = "Libro actualizado correctamente" }
+            }
         });
     }
 
-    // POST: api/libros
-    [HttpPost]
-    public async Task<IActionResult> Create([FromBody] Libro model)
-    {
-        if (string.IsNullOrWhiteSpace(model.Titulo) || string.IsNullOrWhiteSpace(model.Autor))
-            return BadRequest(new { message = "Titulo y Autor son requeridos" });
-
-        if (string.IsNullOrWhiteSpace(model.Categoria)) model.Categoria = "General";
-        if (model.TotalEjemplares < 0 || model.EjemplaresDisponibles < 0)
-            return BadRequest(new { message = "Los ejemplares no pueden ser negativos" });
-
-        if (string.IsNullOrWhiteSpace(model.CondicionGeneral)) model.CondicionGeneral = "Good";
-        var permitidos = new[] { "New", "Good", "Fair", "Poor" };
-        if (!permitidos.Contains(model.CondicionGeneral))
-            return BadRequest(new { message = "CondicionGeneral debe ser New|Good|Fair|Poor" });
-
-        // al crear, si no mandan Disponibles, lo igualamos a Total
-        if (model.EjemplaresDisponibles == 0 && model.TotalEjemplares > 0)
-            model.EjemplaresDisponibles = model.TotalEjemplares;
-
-        model.Habilitado = model.Habilitado; // por defecto true
-        await _repo.Add(model);
-        return CreatedAtAction(nameof(GetById), new { id = model.Id }, new { model.Id });
-    }
-
-    // PUT: api/libros/5
-    [HttpPut("{id:int}")]
-    public async Task<IActionResult> Update(int id, [FromBody] Libro model)
-    {
-        var l = await _repo.GetById(id);
-        if (l is null) return NotFound();
-
-        if (!string.IsNullOrWhiteSpace(model.Titulo)) l.Titulo = model.Titulo;
-        if (!string.IsNullOrWhiteSpace(model.Autor)) l.Autor = model.Autor;
-        if (!string.IsNullOrWhiteSpace(model.Categoria)) l.Categoria = model.Categoria;
-
-        if (model.CostoReposicionBs > 0) l.CostoReposicionBs = model.CostoReposicionBs;
-        if (model.TotalEjemplares >= 0) l.TotalEjemplares = model.TotalEjemplares;
-        if (model.EjemplaresDisponibles >= 0) l.EjemplaresDisponibles = model.EjemplaresDisponibles;
-
-        if (!string.IsNullOrWhiteSpace(model.CondicionGeneral))
-        {
-            var permitidos = new[] { "New", "Good", "Fair", "Poor" };
-            if (!permitidos.Contains(model.CondicionGeneral))
-                return BadRequest(new { message = "CondicionGeneral debe ser New|Good|Fair|Poor" });
-            l.CondicionGeneral = model.CondicionGeneral;
-        }
-
-        // Habilitado si lo envían (true/false)
-        if (l.Habilitado != model.Habilitado) l.Habilitado = model.Habilitado;
-
-        await _repo.Update(l);
-        return NoContent();
-    }
-
-    // DELETE: api/libros/5
+    /// <summary>Elimina un libro (EF)</summary>
+    /// <response code="200">Libro eliminado</response>
     [HttpDelete("{id:int}")]
+    [ProducesResponseType((int)HttpStatusCode.OK, Type = typeof(ApiResponse<bool>))]
     public async Task<IActionResult> Delete(int id)
     {
-        var l = await _repo.GetById(id);
-        if (l is null) return NotFound();
-        await _repo.Delete(id);
-        return NoContent();
-    }
+        await _uow.BeginTransactionAsync();
+        await _uow.Libros.Delete(id);
+        await _uow.CommitAsync();
 
-    // PUT: api/libros/5/habilitar
-    [HttpPut("{id:int}/habilitar")]
-    public async Task<IActionResult> Habilitar(int id)
-    {
-        var l = await _repo.GetById(id);
-        if (l is null) return NotFound();
-        l.Habilitado = true;
-        await _repo.Update(l);
-        return NoContent();
-    }
-
-    // PUT: api/libros/5/deshabilitar
-    [HttpPut("{id:int}/deshabilitar")]
-    public async Task<IActionResult> Deshabilitar(int id)
-    {
-        var l = await _repo.GetById(id);
-        if (l is null) return NotFound();
-        l.Habilitado = false;
-        await _repo.Update(l);
-        return NoContent();
-    }
-
-    // PUT: api/libros/5/condicion?condicion=Fair
-    [HttpPut("{id:int}/condicion")]
-    public async Task<IActionResult> CambiarCondicion(int id, [FromQuery] string condicion)
-    {
-        var permitidos = new[] { "New", "Good", "Fair", "Poor" };
-        if (!permitidos.Contains(condicion))
-            return BadRequest(new { message = "CondicionGeneral debe ser New|Good|Fair|Poor" });
-
-        var l = await _repo.GetById(id);
-        if (l is null) return NotFound();
-        l.CondicionGeneral = condicion;
-        await _repo.Update(l);
-        return NoContent();
+        return Ok(new ApiResponse<bool>(true)
+        {
+            Messages = new[]
+            {
+                new Message { Type = "warning", Description = "Libro eliminado correctamente" }
+            }
+        });
     }
 }

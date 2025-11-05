@@ -1,63 +1,85 @@
 ﻿using Biblioteca.Core.Entities;
 using Biblioteca.Core.Interfaces;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
-namespace Biblioteca.Core.Services;
-public class MultaService : IMultaService
+namespace Biblioteca.Core.Services
 {
-    private readonly IBaseRepository<Multa> _multas;
-    private readonly IBaseRepository<Prestamo> _prestamos;
-
-    public MultaService(IBaseRepository<Multa> multas, IBaseRepository<Prestamo> prestamos)
-    { _multas = multas; _prestamos = prestamos; }
-
-    public async Task<bool> PagarMultaAsync(int multaId)
+    public class MultaService : IMultaService
     {
-        var multa = await _multas.GetById(multaId);
-        if (multa is null) return false;
+        private readonly IUnitOfWork _uow;
 
-        if (multa.Estado != "Paid")
+        public MultaService(IUnitOfWork uow)
         {
-            multa.Estado = "Paid";
-            await _multas.Update(multa);
+            _uow = uow;
         }
 
-        await CerrarPrestamoSiCorresponde(multa.PrestamoId);
-        return true;
-    }
-
-    public async Task<bool> CancelarMultaAsync(int multaId, string? motivo = null)
-    {
-        var multa = await _multas.GetById(multaId);
-        if (multa is null) return false;
-
-        if (multa.Estado != "Canceled")
+        public async Task<bool> PagarMultaAsync(int multaId)
         {
-            multa.Estado = "Canceled";
-            multa.Detalle = string.IsNullOrWhiteSpace(motivo) ? multa.Detalle : $"{multa.Detalle} (Cancelada: {motivo})";
-            await _multas.Update(multa);
+            await _uow.BeginTransactionAsync();
+            try
+            {
+                var multa = await _uow.Multas.GetById(multaId);
+                if (multa is null) return false;
+
+                if (multa.Estado != "Paid")
+                {
+                    multa.Estado = "Paid";
+                    _uow.Multas.Update(multa);
+                }
+
+                await CerrarPrestamoSiCorresponde(multa.PrestamoId);
+                await _uow.CommitAsync();
+                return true;
+            }
+            catch
+            {
+                await _uow.RollbackAsync();
+                throw;
+            }
         }
 
-        await CerrarPrestamoSiCorresponde(multa.PrestamoId);
-        return true;
-    }
-
-    private async Task CerrarPrestamoSiCorresponde(int prestamoId)
-    {
-        var prestamo = await _prestamos.GetById(prestamoId);
-        if (prestamo is null) return;
-
-        // Si todas las multas están pagadas o canceladas → cerramos el préstamo si ya fue devuelto
-        var todas = await _multas.GetAll();
-        var pendientes = todas.Where(m => m.PrestamoId == prestamoId && m.Estado == "Pending");
-        if (!pendientes.Any() && prestamo.Estado == "Devuelto")
+        public async Task<bool> CancelarMultaAsync(int multaId, string? motivo = null)
         {
-            prestamo.Estado = "Cerrado";
-            await _prestamos.Update(prestamo);
+            await _uow.BeginTransactionAsync();
+            try
+            {
+                var multa = await _uow.Multas.GetById(multaId);
+                if (multa is null) return false;
+
+                if (multa.Estado != "Canceled")
+                {
+                    multa.Estado = "Canceled";
+                    multa.Detalle = string.IsNullOrWhiteSpace(motivo)
+                        ? multa.Detalle
+                        : $"{multa.Detalle} (Cancelada: {motivo})";
+                    _uow.Multas.Update(multa);
+                }
+
+                await CerrarPrestamoSiCorresponde(multa.PrestamoId);
+                await _uow.CommitAsync();
+                return true;
+            }
+            catch
+            {
+                await _uow.RollbackAsync();
+                throw;
+            }
+        }
+
+        private async Task CerrarPrestamoSiCorresponde(int prestamoId)
+        {
+            var prestamo = await _uow.Prestamos.GetById(prestamoId);
+            if (prestamo is null) return;
+
+            // Obtener multas pendientes del préstamo
+            var todasMultas = await _uow.MultasEx.GetAllDapperAsync(prestamo.UsuarioId, "Pending");
+            var tienePendientes = todasMultas.Any(m => m.PrestamoId == prestamoId);
+
+            // Si no tiene multas pendientes y el préstamo ya fue devuelto, cerrarlo
+            if (!tienePendientes && prestamo.Estado == "Devuelto")
+            {
+                prestamo.Estado = "Cerrado";
+                _uow.Prestamos.Update(prestamo);
+            }
         }
     }
 }

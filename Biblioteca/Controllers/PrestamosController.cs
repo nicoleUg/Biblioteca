@@ -1,144 +1,132 @@
 ﻿using AutoMapper;
+using Biblioteca.Core.CustomEntities;
 using Biblioteca.Core.DTOs;
-using Biblioteca.Core.Entities;
+using Biblioteca.Core.Exceptions;
 using Biblioteca.Core.Interfaces;
+using Biblioteca.Core.QueryFilters;
+using Biblioteca.Core.Services;
 using Biblioteca.Responses;
-using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
-using System.Globalization;
 using System.Net;
 
-namespace Biblioteca.Controllers
+namespace Biblioteca.Controllers;
+
+[Produces("application/json")]
+[ApiController]
+[Route("api/[controller]")]
+public class PrestamosController : ControllerBase
 {
-    [ApiController]
-    [Route("api/[controller]")]
-    public class PrestamosController : ControllerBase
+    private readonly IUnitOfWork _uow;
+    private readonly IPrestamoService _service;
+    private readonly IMapper _mapper;
+
+    public PrestamosController(IUnitOfWork uow, IPrestamoService service, IMapper mapper)
     {
-        private readonly IPrestamoService _service;
-        private readonly IBaseRepository<Prestamo> _repo;
-        private readonly IMapper _mapper;
-        private readonly IValidator<PrestamoCreateDto> _createValidator;
+        _uow = uow;
+        _service = service;
+        _mapper = mapper;
+    }
 
-        public PrestamosController(
-            IPrestamoService service,
-            IBaseRepository<Prestamo> repo,
-            IMapper mapper,
-            IValidator<PrestamoCreateDto> createValidator)
-        {
-            _service = service;
-            _repo = repo;
-            _mapper = mapper;
-            _createValidator = createValidator;
-        }
+    /// <summary>Lista de préstamos (Dapper + filtros + paginación)</summary>
+    [HttpGet]
+    [ProducesResponseType((int)HttpStatusCode.OK, Type = typeof(ApiResponse<IEnumerable<PrestamoDto>>))]
+    public async Task<IActionResult> Get([FromQuery] PrestamoQueryFilter filters)
+    {
+        // Usar PrestamosEx para acceder a GetAllDapperAsync
+        var items = await _uow.PrestamosEx.GetAllDapperAsync(filters.UsuarioId, filters.LibroId, filters.Estado);
+        var paged = PagedList<Biblioteca.Core.Entities.Prestamo>.Create(items, filters.PageNumber, filters.PageSize);
+        var dto = _mapper.Map<IEnumerable<PrestamoDto>>(paged);
 
-        // GET: api/prestamos
-        [HttpGet]
-        public async Task<IActionResult> GetAll()
+        return Ok(new ApiResponse<IEnumerable<PrestamoDto>>(dto)
         {
-            var list = await _repo.GetAll();
-            var data = list.Select(p => new
+            Pagination = new Pagination
             {
-                p.Id,
-                p.UsuarioId,
-                p.LibroId,
-                p.Estado,
-                FechaPrestamo = p.FechaPrestamo.ToString("dd-MM-yyyy"),
-                FechaLimite = p.FechaLimite.ToString("dd-MM-yyyy"),
-                FechaDevolucion = p.FechaDevolucion?.ToString("dd-MM-yyyy")
+                TotalCount = paged.TotalCount,
+                PageSize = paged.PageSize,
+                CurrentPage = paged.CurrentPage,
+                TotalPages = paged.TotalPages,
+                HasNextPage = paged.HasNextPage,
+                HasPreviousPage = paged.HasPreviousPage
+            }
+        });
+    }
+
+    /// <summary>Obtiene un préstamo por Id (Dapper)</summary>
+    [HttpGet("{id:int}")]
+    public async Task<IActionResult> GetById(int id)
+    {
+        // Usar PrestamosEx para acceder a GetByIdDapperAsync
+        var e = await _uow.PrestamosEx.GetByIdDapperAsync(id);
+        if (e is null) throw new BusinessException("Préstamo no encontrado", 404);
+        return Ok(new ApiResponse<PrestamoDto>(_mapper.Map<PrestamoDto>(e)));
+    }
+
+    /// <summary>Crea un préstamo (reglas de negocio en Service)</summary>
+    [HttpPost]
+    public async Task<IActionResult> Create([FromBody] PrestamoCreateDto dto)
+    {
+        if (!DateTime.TryParseExact(dto.FechaPrestamo, "dd-MM-yyyy",
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var fecha))
+        {
+            return BadRequest(new ApiResponse<object>(null)
+            {
+                Messages = new[] { new Message { Type = "error", Description = "Formato de fecha inválido (dd-MM-yyyy)" } }
             });
-            return Ok(new ApiResponse<object>(data));
         }
 
-        // GET: api/prestamos/5
-        [HttpGet("{id:int}")]
-        public async Task<IActionResult> GetById(int id)
-        {
-            var p = await _repo.GetById(id);
-            if (p is null) return NotFound();
-            var data = new
+        var p = await _service.CrearPrestamoAsync(dto.UsuarioId, dto.LibroId, fecha);
+
+        var outDto = _mapper.Map<PrestamoDto>(p);
+        return StatusCode((int)HttpStatusCode.Created,
+            new ApiResponse<PrestamoDto>(outDto)
             {
-                p.Id,
-                p.UsuarioId,
-                p.LibroId,
-                p.Estado,
-                FechaPrestamo = p.FechaPrestamo.ToString("dd-MM-yyyy"),
-                FechaLimite = p.FechaLimite.ToString("dd-MM-yyyy"),
-                FechaDevolucion = p.FechaDevolucion?.ToString("dd-MM-yyyy")
-            };
-            return Ok(new ApiResponse<object>(data));
+                Messages = new[] { new Message { Type = "success", Description = "Préstamo creado" } }
+            });
+    }
+
+    /// <summary>Registra devolución de préstamo</summary>
+    [HttpPost("{id:int}/devolver")]
+    public async Task<IActionResult> Devolver(int id, [FromQuery] string fecha)
+    {
+        if (!DateTime.TryParseExact(fecha, "dd-MM-yyyy",
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var f))
+        {
+            return BadRequest(new ApiResponse<object>(null)
+            {
+                Messages = new[] { new Message { Type = "error", Description = "Formato de fecha inválido (dd-MM-yyyy)" } }
+            });
         }
 
-        // POST: api/prestamos
-        [HttpPost]
-        public async Task<IActionResult> CrearPrestamo([FromBody] PrestamoCreateDto dto)
+        var p = await _service.DevolverPrestamoAsync(id, f);
+        if (p is null) throw new BusinessException("Préstamo no encontrado", 404);
+
+        return Ok(new ApiResponse<PrestamoDto>(_mapper.Map<PrestamoDto>(p))
         {
-            var val = await _createValidator.ValidateAsync(dto);
-            if (!val.IsValid)
-                return BadRequest(new { Errors = val.Errors.Select(e => e.ErrorMessage) });
+            Messages = new[] { new Message { Type = "success", Description = "Préstamo devuelto" } }
+        });
+    }
 
-            try
+    /// <summary>Elimina un préstamo (solo pruebas)</summary>
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> Delete(int id)
+    {
+        await _uow.BeginTransactionAsync();
+        try
+        {
+            await _uow.Prestamos.Delete(id);
+            await _uow.CommitAsync();
+
+            return Ok(new ApiResponse<bool>(true)
             {
-                var f = DateTime.ParseExact(dto.FechaPrestamo, "dd-MM-yyyy", CultureInfo.InvariantCulture);
-                var p = await _service.CrearPrestamoAsync(dto.UsuarioId, dto.LibroId, f);
-
-                var data = new
-                {
-                    p.Id,
-                    p.UsuarioId,
-                    p.LibroId,
-                    p.Estado,
-                    FechaPrestamo = p.FechaPrestamo.ToString("dd-MM-yyyy"),
-                    FechaLimite = p.FechaLimite.ToString("dd-MM-yyyy"),
-                    FechaDevolucion = p.FechaDevolucion?.ToString("dd-MM-yyyy")
-                };
-
-                return StatusCode((int)HttpStatusCode.Created, new ApiResponse<object>(data));
-            }
-            catch (Exception ex)
-            {
-                return StatusCode((int)HttpStatusCode.InternalServerError, ex.Message);
-            }
+                Messages = new[] { new Message { Type = "warning", Description = "Préstamo eliminado" } }
+            });
         }
-
-        // POST: api/prestamos/{id}/devolver?fecha=dd-MM-yyyy
-        [HttpPost("{id:int}/devolver")]
-        public async Task<IActionResult> Devolver(int id, [FromQuery] string fecha)
+        catch
         {
-            if (!DateTime.TryParseExact(fecha, "dd-MM-yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out var f))
-                return BadRequest(new { Errors = new[] { "Formato de fecha inválido (dd-MM-yyyy)" } });
-
-            try
-            {
-                var p = await _service.DevolverPrestamoAsync(id, f);
-                if (p is null) return NotFound();
-
-                var data = new
-                {
-                    p.Id,
-                    p.UsuarioId,
-                    p.LibroId,
-                    p.Estado,
-                    FechaPrestamo = p.FechaPrestamo.ToString("dd-MM-yyyy"),
-                    FechaLimite = p.FechaLimite.ToString("dd-MM-yyyy"),
-                    FechaDevolucion = p.FechaDevolucion?.ToString("dd-MM-yyyy")
-                };
-
-                return Ok(new ApiResponse<object>(data));
-            }
-            catch (Exception ex)
-            {
-                return StatusCode((int)HttpStatusCode.InternalServerError, ex.Message);
-            }
-        }
-
-        // DELETE: api/prestamos/5  (solo para pruebas)
-        [HttpDelete("{id:int}")]
-        public async Task<IActionResult> Delete(int id)
-        {
-            var p = await _repo.GetById(id);
-            if (p is null) return NotFound();
-            await _repo.Delete(id);
-            return NoContent();
+            await _uow.RollbackAsync();
+            throw;
         }
     }
 }
