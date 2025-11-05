@@ -17,12 +17,11 @@ namespace Biblioteca.Infrastructure.Repositories
             var connection = _context.Database.GetDbConnection();
 
             var sql = @"
-                SELECT m.Id, m.PrestamoId, m.UsuarioId, m.Monto, m.Estado, m.Detalle, 
-                       m.FechaGeneracion, m.FechaPago
+                SELECT m.Id, m.PrestamoId, m.UsuarioId, m.Motivo, m.MontoBs, m.Estado, m.Detalle
                 FROM Multa m
                 WHERE (@UsuarioId IS NULL OR m.UsuarioId = @UsuarioId)
                   AND (@Estado IS NULL OR m.Estado = @Estado)
-                ORDER BY m.FechaGeneracion DESC";
+                ORDER BY m.Id DESC";   // 👈 antes era FechaGeneracion
 
             return await connection.QueryAsync<Multa>(sql, new { UsuarioId = usuarioId, Estado = estado });
         }
@@ -32,8 +31,7 @@ namespace Biblioteca.Infrastructure.Repositories
             var connection = _context.Database.GetDbConnection();
 
             var sql = @"
-                SELECT m.Id, m.PrestamoId, m.UsuarioId, m.Monto, m.Estado, m.Detalle, 
-                       m.FechaGeneracion, m.FechaPago
+                SELECT m.Id, m.PrestamoId, m.UsuarioId, m.Motivo, m.MontoBs, m.Estado, m.Detalle
                 FROM Multa m
                 WHERE m.Id = @Id";
 
