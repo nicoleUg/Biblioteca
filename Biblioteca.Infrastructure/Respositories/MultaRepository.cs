@@ -38,7 +38,6 @@ namespace Biblioteca.Infrastructure.Repositories
             return await connection.QueryFirstOrDefaultAsync<Multa>(sql, new { Id = id });
         }
 
-        // 👇 NUEVO: ESTA CONSULTA USA EF, NO DAPPER
         public async Task<bool> TienePendientesPorPrestamoAsync(int prestamoId)
         {
             return await _context.Multas
