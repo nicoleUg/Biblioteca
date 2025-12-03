@@ -16,19 +16,25 @@ using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1) BASE DE DATOS (MySQL)
+// 1) BASE DE DATOS (SQL SERVER EN AZURE)
 
-// OJO: el nombre debe coincidir con tu user-secret: "ConnectionStrings:ConnectionMySql"
-var connectionString = builder.Configuration.GetConnectionString("MySql");
+// Lee la cadena "ConnectionStrings:AzureSql" desde user-secrets / variables de entorno
+var connectionString = builder.Configuration.GetConnectionString("AzureSql");
+
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new Exception("Falta configurar ConnectionStrings:AzureSql (User Secrets / Azure App Service).");
+}
+
+// DbContext usando SQL Server (Azure SQL Database)
 builder.Services.AddDbContext<BibliotecaContext>(options =>
-    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
+    options.UseSqlServer(connectionString));
 
 // Dapper
 builder.Services.AddSingleton<IDbConnectionFactory, DbConnectionFactory>();
 builder.Services.AddScoped<IDapperContext, DapperContext>();
 
 // 2) REPOSITORIOS / UNIT OF WORK
-
 
 builder.Services.AddScoped(typeof(IBaseRepository<>), typeof(BaseRepository<>));
 builder.Services.AddScoped<ILibroRepository, LibroRepository>();
@@ -46,19 +52,16 @@ builder.Services.AddScoped<IAuthService, AuthService>();
 
 // 4) AUTOMAPPER + VALIDATION
 
-
 builder.Services.AddAutoMapper(typeof(MappingProfile));
 
 builder.Services.AddValidatorsFromAssemblyContaining<UsuarioDtoValidator>();
 builder.Services.AddValidatorsFromAssemblyContaining<PrestamoDtoValidator>();
 builder.Services.AddValidatorsFromAssemblyContaining<MultaDtoValidator>();
 
-
 // 5) AUTHENTICATION - JWT
 
-
 var authSection = builder.Configuration.GetSection("Authentication");
-var secretKey = authSection["SecretKey"]; //user-secrets
+var secretKey = authSection["SecretKey"]; // user-secrets
 
 if (string.IsNullOrWhiteSpace(secretKey))
 {
@@ -74,7 +77,7 @@ builder.Services.AddAuthentication(options =>
 })
 .AddJwtBearer(options =>
 {
-    options.RequireHttpsMetadata = false; //  poner true en prduccion
+    options.RequireHttpsMetadata = false; // poner true en producción si tienes HTTPS completo
     options.SaveToken = true;
     options.TokenValidationParameters = new TokenValidationParameters
     {
@@ -88,9 +91,7 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-
 // 6) CONTROLLERS + JSON
-
 
 builder.Services.AddControllers()
     .AddNewtonsoftJson(options =>
@@ -99,9 +100,7 @@ builder.Services.AddControllers()
             Newtonsoft.Json.ReferenceLoopHandling.Ignore;
     });
 
-
 // 7) VERSIONAMIENTO DE API
-
 
 builder.Services.AddApiVersioning(options =>
 {
@@ -123,10 +122,7 @@ builder.Services.AddVersionedApiExplorer(options =>
     options.SubstituteApiVersionInUrl = true;      // reemplaza {version:apiVersion} en las rutas
 });
 
-
-
 // 8) SWAGGER (con XML + JWT)
-
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
@@ -177,9 +173,7 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
-
 // 9) MIDDLEWARE PIPELINE
-
 
 if (app.Environment.IsDevelopment())
 {
@@ -194,8 +188,8 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-app.UseAuthentication();  // 🔐 primero autenticación
-app.UseAuthorization();   // luego autorización
+app.UseAuthentication();  
+app.UseAuthorization();   
 
 app.MapControllers();
 
