@@ -70,16 +70,14 @@ namespace Biblioteca.Core.Services
             var prestamo = await _uow.Prestamos.GetById(prestamoId);
             if (prestamo is null) return;
 
-            // Obtener multas pendientes del préstamo
-            var todasMultas = await _uow.MultasEx.GetAllDapperAsync(prestamo.UsuarioId, "Pending");
-            var tienePendientes = todasMultas.Any(m => m.PrestamoId == prestamoId);
+            var tienePendientes = await _uow.MultasEx.TienePendientesPorPrestamoAsync(prestamoId);
 
-            // Si no tiene multas pendientes y el préstamo ya fue devuelto, cerrarlo
             if (!tienePendientes && prestamo.Estado == "Devuelto")
             {
                 prestamo.Estado = "Cerrado";
                 _uow.Prestamos.Update(prestamo);
             }
         }
+
     }
 }

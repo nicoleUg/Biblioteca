@@ -5,6 +5,7 @@ using Biblioteca.Core.Exceptions;
 using Biblioteca.Core.Interfaces;
 using Biblioteca.Core.QueryFilters;
 using Biblioteca.Responses;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Net;
 
@@ -12,7 +13,9 @@ namespace Biblioteca.Controllers;
 
 [Produces("application/json")]
 [ApiController]
-[Route("api/[controller]")]
+[ApiVersion("1.0")]
+[Route("api/v{version:apiVersion}/[controller]")]
+[Authorize(Roles = "staff")]
 public class UsuariosController : ControllerBase
 {
     private readonly IUnitOfWork _uow;

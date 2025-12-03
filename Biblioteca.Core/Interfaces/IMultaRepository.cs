@@ -8,5 +8,6 @@ namespace Biblioteca.Core.Interfaces
     {
         Task<IEnumerable<Multa>> GetAllDapperAsync(int? usuarioId, string? estado);
         Task<Multa?> GetByIdDapperAsync(int id);
+        Task<bool> TienePendientesPorPrestamoAsync(int prestamoId);
     }
 }

@@ -21,7 +21,7 @@ namespace Biblioteca.Infrastructure.Repositories
                 FROM Multa m
                 WHERE (@UsuarioId IS NULL OR m.UsuarioId = @UsuarioId)
                   AND (@Estado IS NULL OR m.Estado = @Estado)
-                ORDER BY m.Id DESC";   // 👈 antes era FechaGeneracion
+                ORDER BY m.Id DESC";
 
             return await connection.QueryAsync<Multa>(sql, new { UsuarioId = usuarioId, Estado = estado });
         }
@@ -36,6 +36,13 @@ namespace Biblioteca.Infrastructure.Repositories
                 WHERE m.Id = @Id";
 
             return await connection.QueryFirstOrDefaultAsync<Multa>(sql, new { Id = id });
+        }
+
+        // 👇 NUEVO: ESTA CONSULTA USA EF, NO DAPPER
+        public async Task<bool> TienePendientesPorPrestamoAsync(int prestamoId)
+        {
+            return await _context.Multas
+                .AnyAsync(m => m.PrestamoId == prestamoId && m.Estado == "Pending");
         }
     }
 }
