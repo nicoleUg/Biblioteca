@@ -1,22 +1,25 @@
 ﻿using System.Data;
-using MySqlConnector;
+using Microsoft.Data.SqlClient; 
 using Microsoft.Extensions.Configuration;
-using Biblioteca.Core.Interfaces;   // <- IMPORTANTE: usa la interfaz de Core
+using Biblioteca.Core.Interfaces;
 
 namespace Biblioteca.Infrastructure.Data
 {
-    public class DbConnectionFactory : IDbConnectionFactory  // <- IMPLEMENTA LA INTERFAZ
+    public class DbConnectionFactory : IDbConnectionFactory
     {
         private readonly string _cs;
 
         public DbConnectionFactory(IConfiguration cfg)
         {
-            _cs = cfg.GetConnectionString("MySql") ?? "";
+           
+            _cs = cfg.GetConnectionString("AzureSql")
+                  ?? cfg.GetConnectionString("DefaultConnection")
+                  ?? "";
         }
 
         public IDbConnection CreateConnection()
         {
-            return new MySqlConnection(_cs);
+            return new SqlConnection(_cs);
         }
     }
 }

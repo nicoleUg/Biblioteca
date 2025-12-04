@@ -14,7 +14,13 @@ public class MultaConfiguration : IEntityTypeConfiguration<Multa>
         b.Property(x => x.Estado).HasMaxLength(20);
         b.Property(x => x.MontoBs).HasColumnType("decimal(12,2)");
 
-        b.HasOne(x => x.Prestamo).WithMany(p => p.Multas).HasForeignKey(x => x.PrestamoId);
-        b.HasOne(x => x.Usuario).WithMany(u => u.Multas).HasForeignKey(x => x.UsuarioId);
+        b.HasOne(x => x.Prestamo)
+         .WithMany(p => p.Multas)
+         .HasForeignKey(x => x.PrestamoId);
+
+        b.HasOne(x => x.Usuario)
+         .WithMany(u => u.Multas)
+         .HasForeignKey(x => x.UsuarioId)
+         .OnDelete(DeleteBehavior.Restrict); 
     }
 }
