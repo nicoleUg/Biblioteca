@@ -16,8 +16,8 @@ using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1) BASE DE DATOS (SQL SERVER EN AZURE)
 
+// 1) BASE DE DATOS (SQL SERVER EN AZURE)
 // Lee la cadena "ConnectionStrings:AzureSql" desde user-secrets / variables de entorno
 var connectionString = builder.Configuration.GetConnectionString("AzureSql");
 
@@ -35,7 +35,6 @@ builder.Services.AddSingleton<IDbConnectionFactory, DbConnectionFactory>();
 builder.Services.AddScoped<IDapperContext, DapperContext>();
 
 // 2) REPOSITORIOS / UNIT OF WORK
-
 builder.Services.AddScoped(typeof(IBaseRepository<>), typeof(BaseRepository<>));
 builder.Services.AddScoped<ILibroRepository, LibroRepository>();
 builder.Services.AddScoped<IUsuarioRepository, UsuarioRepository>();
@@ -45,13 +44,11 @@ builder.Services.AddScoped<IMultaRepository, MultaRepository>();
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
 // 3) SERVICIOS (LÓGICA DE NEGOCIO)
-
 builder.Services.AddScoped<IPrestamoService, PrestamoService>();
 builder.Services.AddScoped<IMultaService, MultaService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 
 // 4) AUTOMAPPER + VALIDATION
-
 builder.Services.AddAutoMapper(typeof(MappingProfile));
 
 builder.Services.AddValidatorsFromAssemblyContaining<UsuarioDtoValidator>();
@@ -59,13 +56,12 @@ builder.Services.AddValidatorsFromAssemblyContaining<PrestamoDtoValidator>();
 builder.Services.AddValidatorsFromAssemblyContaining<MultaDtoValidator>();
 
 // 5) AUTHENTICATION - JWT
-
 var authSection = builder.Configuration.GetSection("Authentication");
-var secretKey = authSection["SecretKey"]; // user-secrets
+var secretKey = authSection["SecretKey"]; 
 
 if (string.IsNullOrWhiteSpace(secretKey))
 {
-    throw new Exception("Falta configurar Authentication:SecretKey en user-secrets.");
+    throw new Exception("Falta configurar Authentication:SecretKey en user-secrets o App Service.");
 }
 
 var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
@@ -77,7 +73,7 @@ builder.Services.AddAuthentication(options =>
 })
 .AddJwtBearer(options =>
 {
-    options.RequireHttpsMetadata = false; // poner true en producción si tienes HTTPS completo
+    options.RequireHttpsMetadata = false; 
     options.SaveToken = true;
     options.TokenValidationParameters = new TokenValidationParameters
     {
@@ -92,7 +88,6 @@ builder.Services.AddAuthentication(options =>
 });
 
 // 6) CONTROLLERS + JSON
-
 builder.Services.AddControllers()
     .AddNewtonsoftJson(options =>
     {
@@ -101,7 +96,6 @@ builder.Services.AddControllers()
     });
 
 // 7) VERSIONAMIENTO DE API
-
 builder.Services.AddApiVersioning(options =>
 {
     options.ReportApiVersions = true;
@@ -118,8 +112,8 @@ builder.Services.AddApiVersioning(options =>
 // Explorar versiones para Swagger
 builder.Services.AddVersionedApiExplorer(options =>
 {
-    options.GroupNameFormat = "'v'VVV";             // v1, v1.0, etc.
-    options.SubstituteApiVersionInUrl = true;      // reemplaza {version:apiVersion} en las rutas
+    options.GroupNameFormat = "'v'VVV";            
+    options.SubstituteApiVersionInUrl = true;      
 });
 
 // 8) SWAGGER (con XML + JWT)
@@ -184,6 +178,12 @@ if (app.Environment.IsDevelopment())
         c.DocumentTitle = "Documentación API - Biblioteca";
         c.RoutePrefix = "swagger";
     });
+}
+else
+{
+   
+    // app.UseSwagger();
+    // app.UseSwaggerUI();
 }
 
 app.UseHttpsRedirection();
